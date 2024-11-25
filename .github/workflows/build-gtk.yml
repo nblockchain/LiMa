@@ -1,0 +1,47 @@
+name: Build Controls.Sample.Gtk
+on: [push, pull_request]
+
+jobs:
+  build_and_test:
+    name: Build & Test
+    runs-on: ubuntu-22.04
+    env:
+      GtkSharpVersion: 3.24.24.117-develop
+      GtkSharpManifestVersion: 8.0.200
+      DotnetVersion: 8.0.200
+      PROJECTS_TO_PACK: |
+        src/BlazorWebView/src/Maui/Microsoft.AspNetCore.Components.WebView.Maui.csproj
+        src/Essentials/src/Essentials.csproj
+        src/Controls/src/Core/Controls.Core.csproj
+        src/Controls/src/Xaml/Controls.Xaml.csproj
+        src/Core/src/Core.csproj
+        src/Compatibility/Core/src/Compatibility.csproj
+        src/Controls/Foldable/src/Controls.Foldable.csproj
+        src/Graphics/src/Graphics/Graphics.csproj
+    steps:
+      - name: Checkout MAUI repo
+        uses: actions/checkout@v2
+      - name: Setup .NET SDK ${{ env.DotnetVersion }}
+        uses: actions/setup-dotnet@v1.7.2
+        with:
+          dotnet-version: ${{ env.DotnetVersion }}
+      - name: Install gtk workload
+        run: ./install_gtk_workload.sh
+      - name: Generate pre-release version suffix
+        run: dotnet fsi nugetPreRelease.fsx "" > PreReleaseVersionSuffix.txt
+      - name: Build MAUI
+        run: |
+            mv Directory.Build.Override.props.in Directory.Build.Override.props
+            dotnet build Microsoft.Maui.BuildTasks.slnf
+            echo "$PROJECTS_TO_PACK" | while read -r project; do
+              [ -z "$project" ] && continue  # Skip if empty
+              dotnet build -c Release "$project"
+            done
+      - name: Pack MAUI
+        run: ./pack_mali.sh
+      - name: Upload binaries to nuget (if tag or main branch, and nugetKey is present)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NUGET_KEY: ${{ secrets.NUGET_KEY }}
+        if: ${{ env.NUGET_KEY != ''  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')) }}
+        run: dotnet nuget push **/*.nupkg --api-key ${{ secrets.NUGET_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
